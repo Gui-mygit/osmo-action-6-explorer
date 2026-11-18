@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="deep" data-mode="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#05080d" />
+  <title>DJI Osmo Action 6 — 结构拆解可视化</title>
+  <meta name="description" content="DJI Osmo Action 6 交互式 3D 结构拆解可视化：点击部件、查看参数、自由旋转与缩放，支持深色 / 浅色科技背景切换。" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23050a0f'/%3E%3Cpath d='M8 8h4v16H8zm6 0h4v10h-4zm6 0h4v16h-4z' fill='%2370e6ff'/%3E%3C/svg%3E" />
+  <script>
+    // 在样式加载前恢复主题，避免深色闪屏。
+    (function () {
+      try {
+        var modes = {
+          deep: 'dark',
+          daylight: 'light',
+          dive: 'dark',
+          trail: 'light',
+          moto: 'dark',
+          snow: 'light'
+        };
+        var params = new URLSearchParams(window.location.search);
+        var queryTheme = params.get('theme');
+        var saved = window.localStorage.getItem('oa6-theme');
+        if (saved === 'dark') saved = 'deep';
+        if (saved === 'light') saved = 'daylight';
+        if (queryTheme === 'dark') queryTheme = 'deep';
+        if (queryTheme === 'light') queryTheme = 'daylight';
+        var theme = modes[queryTheme] ? queryTheme : (modes[saved] ? saved : 'deep');
+        var mode = modes[theme];
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.mode = mode;
+        document.documentElement.style.colorScheme = mode;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', mode === 'light' ? '#eaf1f6' : '#05080d');
+      } catch (error) {
+        document.documentElement.dataset.theme = 'deep';
+        document.documentElement.dataset.mode = 'dark';
+      }
+    })();
+  </script>
+  <link rel="preload" href="./assets/fonts/MiSans-Regular-subset.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="./assets/fonts/NotoSansSC-VF-subset.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="./css/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.js",
+        "three/addons/": "./vendor/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- ── 全屏 360° 世界层 ───────────────────────────────── -->
+    <div class="world-layer" aria-hidden="true">
+      <canvas id="worldCanvas"></canvas>
+    </div>
+
+    <!-- ── 3D 舞台 ─────────────────────────────────────────── -->
+    <main class="stage" id="stage" aria-label="Osmo Action 6 三维拆解视图">
+      <div class="stage-bg" aria-hidden="true">
+        <div class="stage-glow stage-glow--cyan"></div>
+        <div class="stage-glow stage-glow--warm"></div>
+        <div class="stage-grid"></div>
+        <div class="stage-vignette"></div>
+      </div>
+
+      <canvas id="scene"></canvas>
+
+      <div class="frame-corner frame-corner--tl" aria-hidden="true"></div>
+      <div class="frame-corner frame-corner--tr" aria-hidden="true"></div>
+      <div class="frame-corner frame-corner--bl" aria-hidden="true"></div>
+      <div class="frame-corner frame-corner--br" aria-hidden="true"></div>
+
+      <div class="labels" id="labels" aria-live="polite"></div>
+      <svg class="leaders" id="leaders" aria-hidden="true"></svg>
+
+      <div class="controls-dock" role="toolbar" aria-label="视图控制">
+        <button class="ctrl-btn ctrl-btn--icon" id="explodeAll" aria-label="全部拆解" data-tooltip="全部拆解">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/><path d="m4 4 5 5m11-5-5 5M4 20l5-5m11 5-5-5"/></svg>
+        </button>
+        <button class="ctrl-btn ctrl-btn--icon" id="resetParts" aria-label="零件归位" data-tooltip="零件归位">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11a8 8 0 1 1 2.4 6.4M4 5v6h6"/></svg>
+        </button>
+        <span class="dock-divider" aria-hidden="true"></span>
+        <button class="ctrl-btn ctrl-btn--icon" id="autoRotate" aria-label="自动旋转" aria-pressed="false" data-tooltip="自动旋转">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="4.2"/><circle cx="18.8" cy="9.8" r="1.4" fill="currentColor" stroke="none"/><path d="M12 3.5a8.5 8.5 0 0 1 8.1 5.8"/></svg>
+        </button>
+        <button class="ctrl-btn ctrl-btn--icon" id="resetCamera" aria-label="重置视角" data-tooltip="重置视角">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="8.5" opacity=".45"/></svg>
+        </button>
+        <button class="ctrl-btn ctrl-btn--icon" id="helpBtn" aria-label="操作说明" data-tooltip="操作说明">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 3.9 2.1c-.9.6-1.5 1.1-1.5 2.2"/><circle cx="12" cy="17.2" r=".8" fill="currentColor" stroke="none"/></svg>
+        </button>
+      </div>
+
+    </main>
+
+    <!-- ── 右侧部件清单 / 参数面板 ─────────────────────────── -->
+    <aside class="panel" id="panel" aria-label="部件与参数">
+      <h1 class="visually-hidden">部件与参数</h1>
+      <section class="selected-card" id="selectedCard" aria-live="polite"></section>
+      <div class="progress-track" aria-hidden="true"><span id="progressBar"></span></div>
+      <div class="part-list" id="partList" role="listbox" aria-label="全部部件"></div>
+    </aside>
+
+    <!-- ── 顶部标识 ───────────────────────────────────────── -->
+    <header class="topbar" id="topbar">
+      <div class="brand">
+        <img
+          class="brand-logo"
+          src="./assets/brand/osmo-action-6-lockup-white.png"
+          width="3540"
+          height="480"
+          alt="DJI Osmo Action 6"
+          fetchpriority="high"
+        />
+      </div>
+      <div class="top-actions">
+        <div class="theme-paddle" id="themePaddle" role="radiogroup" aria-label="主题场景">
+          <span class="theme-paddle-thumb" id="themePaddleThumb" aria-hidden="true"></span>
+          <div class="theme-paddle-options" id="themePaddleOptions"></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ── 载入层 ─────────────────────────────────────────── -->
+    <div class="loader" id="loader">
+      <div class="loader-scan" aria-hidden="true"></div>
+      <div class="loader-frame" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div class="loader-content">
+        <h2 class="loader-title">结构载入</h2>
+        <div class="loader-bar"><span id="loaderBar"></span></div>
+        <div class="loader-meta"><span id="loaderPct">00%</span></div>
+      </div>
+    </div>
+
+    <!-- ── 加载失败提示 ───────────────────────────────────── -->
+    <div class="error-layer" id="errorLayer" role="alert">
+      <div class="error-card">
+        <h2>3D 模型加载失败</h2>
+        <p id="errorMessage">请通过本地 HTTP 服务打开此页面，直接双击 HTML 会被浏览器拦截外部模型文件。</p>
+        <pre><code>cd "06-Three.js-拆解可视化"
+python3 serve.py</code></pre>
+        <button id="retryBtn" class="solid-btn">重新加载</button>
+      </div>
+    </div>
+
+    <!-- ── 操作指南弹层 ───────────────────────────────────── -->
+    <div class="help-layer" id="helpLayer" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="help-card">
+        <button class="help-close" id="helpClose" aria-label="关闭操作说明">×</button>
+        <h2 id="helpTitle">操作</h2>
+        <div class="help-grid">
+          <div class="help-item"><span>01</span><b>观察</b><p>拖拽旋转 · 滚轮缩放</p></div>
+          <div class="help-item"><span>02</span><b>拆解</b><p>单击部件或名称，再次单击收合</p></div>
+          <div class="help-item"><span>03</span><b>控制</b><p>底部图标：全部拆解、归位、自动旋转、重置视角</p></div>
+          <div class="help-item"><span>04</span><b>快捷键</b><p><kbd>空格</kbd> 全部 · <kbd>R</kbd> 视角 · <kbd>T</kbd> 主题 · <kbd>H</kbd> 操作 · <kbd>Esc</kbd> 取消</p></div>
+        </div>
+        <p class="help-note">结构分区由模型几何近似划分，用于交互展示。</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 直接双击 HTML 时给出友好提示；3D 资源必须通过 HTTP 访问。
+    if (window.location.protocol === 'file:') {
+      document.addEventListener('DOMContentLoaded', function () {
+        var loader = document.getElementById('loader');
+        var error = document.getElementById('errorLayer');
+        var message = document.getElementById('errorMessage');
+        if (loader) loader.classList.add('is-done');
+        if (error) error.classList.add('is-visible');
+        if (message) message.textContent = '浏览器禁止 file:// 协议加载外部 GLB 与 ES 模块。请通过文件夹内的 serve.py 启动本地服务后访问。';
+      });
+    }
+  </script>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
